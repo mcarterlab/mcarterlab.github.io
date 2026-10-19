@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>STARWELL-loading</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; background:#05060f; overflow:hidden;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:#e8e8f2; }
+  #app { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  /* font-size on #stage is set by fit() from the FITTED width, so everything below is a
+     fraction of the real frame. Viewport-keyed units (vw / min-width px) used to spill
+     out of the letterbox on any screen whose aspect is not 400x640. */
+  #stage { position:relative; font-size:16px; }
+  canvas { display:block; width:100%; height:100%; touch-action:none; }
+
+  .overlay { position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; justify-content:safe center; text-align:center; gap:0.7em;
+    padding:0.8em 0.6em; padding-bottom:calc(0.8em + env(safe-area-inset-bottom, 0px));
+    overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
+    background:radial-gradient(circle at 50% 40%, rgba(30,20,70,.55), rgba(4,4,12,.92)); }
+  .overlay.hidden { display:none; }
+  h1 { font-size:2.05em; line-height:1.08; letter-spacing:.15em; font-weight:800; max-width:100%;
+    background:linear-gradient(180deg,#fff,#8ab6ff); -webkit-background-clip:text; background-clip:text;
+    color:transparent; text-shadow:0 0 24px rgba(120,90,255,.35); }
+  .sub { font-size:0.9em; opacity:.72; letter-spacing:.04em; max-width:21em; line-height:1.4; }
+  .btn { border:1px solid rgba(160,160,255,.45); background:rgba(90,70,200,.22);
+    color:#eaeaff; padding:0.72em 1em; border-radius:0.6em; font-size:1em;
+    font-weight:600; cursor:pointer; letter-spacing:.03em; min-width:0; width:100%; max-width:17em; }
+  .btn:hover { background:rgba(120,100,255,.35); }
+  .btn:disabled { opacity:.42; cursor:default; }
+  .btn.ad { border-color:rgba(255,205,120,.5); background:rgba(200,150,40,.22); }
+  .btn.ad::before { content:"▶ "; }
+  .btn.row { flex:1 1 0; width:auto; max-width:none; padding:0.72em 0.5em; font-size:0.85em; }
+  .rowbtns { display:flex; gap:0.5em; width:100%; max-width:17.5em; }
+  .linkbtn { background:none; border:0; color:#a9a9cc; font-size:0.78em; cursor:pointer;
+    text-decoration:underline; padding:0.25em; font-family:inherit; }
+  .score { font-size:2.85em; font-weight:800; letter-spacing:.03em; line-height:1.1; }
+  .lbl { font-size:0.72em; letter-spacing:.2em; opacity:.55; text-transform:uppercase; }
+
+  #mute { position:absolute; top:0.3em; left:50%; transform:translateX(-50%); z-index:4;
+    width:2.4em; height:2.4em; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(160,160,255,.35); background:rgba(26,22,54,.6); color:#dfe3ff;
+    font-size:0.8em; line-height:1; cursor:pointer; padding:0; }
+  #mute.off { opacity:.5; }
+
+  /* PUBLIC / AD-FREE BUILD: the reserved banner slot is hidden here. The ad build keeps
+     display:flex and swaps this container for the real SDK banner. */
+  #banner { position:absolute; left:50%; transform:translateX(-50%); bottom:0;
+    width:calc(100% - 1.2em); max-width:22em; height:2.9em; background:#101024;
+    border:1px dashed rgba(140,140,220,.35); display:none; align-items:center; justify-content:center;
+    font-size:0.6em; letter-spacing:.18em; opacity:.55; text-transform:uppercase; }
+  #banner.hidden { display:none; }
+
+  #hud { position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between;
+    padding:0.75em 1.1em; font-size:0.95em; letter-spacing:.08em; pointer-events:none; }
+  #hud.hidden { display:none; }
+  #undo { position:absolute; bottom:0.45em; left:50%; transform:translateX(-50%);
+    pointer-events:auto; display:none; }
+  #undo.show { display:block; }
+  #undo .btn { width:auto; max-width:none; min-width:0; padding:0.52em 1em; font-size:0.76em; }
+  #smoke-status { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; }
+</style>
+</head>
+<body>
+<div id="app"><div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="hud" class="hidden">
+    <div><span class="lbl">Score</span><br><span id="score">0</span></div>
+    <div style="text-align:right"><span class="lbl">Coins</span><br><span id="coins">0</span>
+      <br><span class="lbl">Best</span> <span id="best">0</span></div>
+  </div>
+  <button id="mute" type="button" aria-label="Toggle sound" aria-pressed="false">🔊</button>
+  <div id="undo"><button class="btn" id="btnUndo">Undo last drop</button></div>
+  <div id="banner">Ad space — reserved</div>
+
+  <div class="overlay" id="titleScreen">
+    <h1>STARWELL</h1>
+    <div class="sub">Merge the cosmic bodies. Reach the black hole.</div>
+    <button class="btn" id="btnPlay">PLAY</button>
+    <button class="btn" id="btnDaily">Daily Challenge</button>
+    <div class="sub" id="collection">Collection 0/8</div>
+  </div>
+
+  <div class="overlay hidden" id="overScreen">
+    <div class="lbl">Run over</div>
+    <div class="score" id="finalScore">0</div>
+    <div class="sub" id="newBest"></div>
+    <div class="rowbtns" id="reviveRow">
+      <button class="btn ad row" id="btnRevive">Ad: clear bottom</button>
+      <button class="btn row" id="btnReviveCoins">Coins: clear bottom</button>
+    </div>
+    <button class="btn" id="btnAgain">Play again</button>
+    <div class="sub" id="reviveHint"></div>
+    <button class="linkbtn" id="btnSkip">No thanks</button>
+  </div>
+
+  <div id="smoke-status" data-state="loading"></div>
+</div></div>
+
+<!-- Shared procedural music engine (see shared/MUSIC.md). If it 404s the game still runs,
+     just silent: musicStart() checks for the global. -->
+<script src="../shared/minstrel.js"></script>
+<!-- PUBLIC / AD-FREE BUILD: the fake-ad stand-in is deliberately NOT loaded here. The game
+     detects its absence (HAS_ADS === false) and every ad path falls back to the coin path.
+     The ad build for CrazyGames keeps <script src="./fakeads.js"> and swaps it for the SDK. -->
+<script>
+"use strict";
+/* STARWELL v0 — drop-merge puzzle. Zero deps, zero image assets. Logical space 400x640. */
+(function () {
+  const W = 400, H = 640;
+  const LEFT = 30, RIGHT = 370, CEIL = 118, FLOOR = 590;   // well interior (y>592 is the UI strip)
+  const G = 1600;              // gravity, logical units/s^2
+  const REST = 0.18;           // restitution against walls
+  const FRIC = 0.86;           // tangential damping on floor contact
+  const DT = 1 / 240;          // fixed timestep (never frame-rate dependent)
+  const SUB = 4;               // physics substeps per rendered frame target
+  const OVER_TIME = 1.2;       // s a body must sit above the line to end the run
+
+  // ---- coin economy: every rewarded item is also buyable, and the price climbs with how
+  // much progress is at stake. Tune here — nothing else hardcodes a price.
+  const RUN_STIPEND = 5;       // coins a run starts with, so an early undo is affordable
+  const UNDO_BASE = 3,  UNDO_STEP = 3;     // undo   = BASE + highestTierOnBoard * STEP
+  const REVIVE_BASE = 12, REVIVE_STEP = 6; // revive = BASE + highestTierOnBoard * STEP
+
+  const TIERS = [
+    { n:"Dust",       r:12,  a:"#8b7355", b:"#d8c39a" },
+    { n:"Meteor",     r:17,  a:"#5a5a66", b:"#b0b0bd" },
+    { n:"Moon",       r:24,  a:"#8f8fa0", b:"#e6e6f0" },
+    { n:"Planet",     r:34,  a:"#1f7a66", b:"#74d8b4" },
+    { n:"Gas Giant",  r:48,  a:"#b8792f", b:"#ffd98a" },
+    { n:"Star",       r:68,  a:"#c98a2f", b:"#fff0a0" },
+    { n:"Red Giant",  r:96,  a:"#b23a2f", b:"#ff9a78" },
+    { n:"Black Hole", r:136, a:"#141428", b:"#7b52e0" }
+  ];
+  const TRI = TIERS.map((_, i) => (i + 1) * (i + 2) / 2);  // points for reaching tier i
+
+  const SPAWN_WEIGHTS = [4, 3, 2, 1];   // weight per tier index 0..3 (low tiers only, like any drop-merge)
+  const SPAWN_TABLE = [];
+  SPAWN_WEIGHTS.forEach((w, tier) => { for (let k = 0; k < w; k++) SPAWN_TABLE.push(tier); });
+
+  let rngState = (Math.random() * 1e9) | 0;
+  function rng() { rngState = (rngState * 1103515245 + 12345) & 0x7fffffff; return rngState / 0x7fffffff; }
+  function randSpawn() { return SPAWN_TABLE[(rng() * SPAWN_TABLE.length) | 0]; }
+
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+  const stage = document.getElementById("stage");
+  const smoke = document.getElementById("smoke-status");
+  const hud = document.getElementById("hud");
+  const titleScreen = document.getElementById("titleScreen");
+  const overScreen = document.getElementById("overScreen");
+  const banner = document.getElementById("banner");
+  const elScore = document.getElementById("score");
+  const elCoins = document.getElementById("coins");
+  const elBest = document.getElementById("best");
+  const elFinal = document.getElementById("finalScore");
+  const elNewBest = document.getElementById("newBest");
+  const elColl = document.getElementById("collection");
+  const elHint = document.getElementById("reviveHint");
+  const undoWrap = document.getElementById("undo");
+  const btnUndo = document.getElementById("btnUndo");
+  const btnRevive = document.getElementById("btnRevive");
+  const btnReviveCoins = document.getElementById("btnReviveCoins");
+  const reviveRow = document.getElementById("reviveRow");
+  const btnMute = document.getElementById("mute");
+
+  // ---- layout: fit the 400x640 logical space into the viewport, DPR capped at 2 ----
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function fit() {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const scale = Math.min(vw / W, vh / H);
+    const cssW = Math.round(W * scale), cssH = Math.round(H * scale);
+    stage.style.width = cssW + "px"; stage.style.height = cssH + "px";
+    cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+    cv.style.width = cssW + "px"; cv.style.height = cssH + "px";
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+    // Overlay type rides the FITTED width, not the viewport: on a landscape screen the
+    // well is a narrow column, and viewport-keyed sizes climbed straight out of the frame.
+    stage.style.fontSize = Math.max(11, Math.min(24, cssW / 26)) + "px";
+  }
+  window.addEventListener("resize", fit); fit();
+
+  // ---- persistence (guest path; CG Data module later) ----
+  const KEY = "starwell.v0";
+  const save = load();
+  function load() {
+    try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; }
+  }
+  function persist() {
+    try { localStorage.setItem(KEY, JSON.stringify(save)); } catch (e) {}
+  }
+
+  // ---- game state ----
+  let state = "title";      // title | play | over
+  let bodies = [], score = 0, coins = 0, nextTier = randSpawn();
+  let held = null;          // { x, tier } while the pointer hovers
+  let pointerX = W / 2;
+  let overAccum = 0, mergeFlash = [], reviveUsedThisSession = false, games = 0;
+  let seedMode = false;
+  let adOpen = false;       // true while a fake ad overlay is up
+
+  // ---- audio: WebAudio, zero assets. The master gain sits between every sound and the
+  // output, so one mute flips sfx and music together and ad ducking never edits the setting.
+  let AC = null, MASTER = null;
+  let muted = !!save.muted, ducked = false;
+  function ac() {
+    if (!AC) { const C = window.AudioContext || window.webkitAudioContext; if (C) AC = new C(); }
+    if (AC && AC.state === "suspended") AC.resume();
+    return AC;
+  }
+  function applyVol() { if (MASTER) MASTER.gain.value = (muted || ducked) ? 0 : 1; }
+  function masterGain() {
+    const a = ac(); if (!a) return null;
+    if (!MASTER) { MASTER = a.createGain(); MASTER.connect(a.destination); applyVol(); }
+    return MASTER;
+  }
+  function duck(on) { ducked = on; applyVol(); applyMusicVol(); }
+  function setMuted(m) { muted = m; save.muted = m; persist(); applyVol(); applyMusicVol(); syncMuteBtn(); }
+  function syncMuteBtn() {
+    btnMute.textContent = muted ? "🔇" : "🔊";
+    btnMute.classList.toggle("off", muted);
+    btnMute.setAttribute("aria-pressed", muted ? "true" : "false");
+  }
+  function blip(freq, dur, type, vol) {
+    const a = ac(); if (!a) return;
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || "sine"; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol || .12, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, a.currentTime + dur);
+    o.connect(g); g.connect(masterGain() || a.destination);
+    o.start(); o.stop(a.currentTime + dur);
+  }
+  function sfxDrop() { blip(180, .09, "triangle", .09); }
+  function sfxMerge(t) { blip(300 + t * 55, .16, "sine", .13); blip(450 + t * 80, .22, "sine", .06); }
+  function sfxOver() { blip(140, .5, "sawtooth", .1); }
+
+  // ---- music: the shared Minstrel engine (shared/minstrel.js), zero asset bytes --------
+  // A drop-merge puzzle is a 10-20 minute sit, so this is the "room" music, not drive:
+  //   tempo 76      slow enough to sit under a puzzle without nagging (3.16 s a bar)
+  //   groove straight  a soft kick on 1 and 3, snare on 2 and 4. Measured against 'half':
+  //                 the bar-line envelope dips to 17% of median under 'half' (a hole every
+  //                 3 s, the v1 "chunks" defect) vs 64% under 'straight'. Continuity wins.
+  //   palette glass bright, clean sine/triangle voices that read on a phone speaker
+  //   space 0.8     wide two-tap reverb tail (0.28 of median) — the cosmic part of the feel
+  //   swing 0.3     a little lilt, so the grid is not metronomic
+  //   dorian        minor-but-not-sad, no leading tone pulling the ear
+  // prog and register stay 'auto' so the seed picks them: one piece per session, and the
+  // daily challenge gets its own piece from the date.
+  const MUSIC_VOL = 0.5;
+  const MUSIC_OPTS = { tempo: 76, scale: "dorian", root: 57, prog: "auto",
+                       groove: "straight", palette: "glass", swing: 0.3, space: 0.8 };
+  const SESSION_MUSIC_SEED = (Math.random() * 1e9) | 0;
+  let music = null;
+  function musicVolumeTarget() { return (muted || ducked) ? 0 : MUSIC_VOL; }
+  function applyMusicVol() { if (music) music.setVolume(musicVolumeTarget()); }
+  function musicStart() {
+    if (typeof Minstrel === "undefined") return;    // engine missing: silent, game intact
+    const seed = seedMode ? dailySeed() : SESSION_MUSIC_SEED;
+    if (music && music.seed === seed) {             // same piece: keep it running
+      music.setVolume(musicVolumeTarget());
+      music.start();                                // no-op while playing
+      return;
+    }
+    if (music) { music.stop(); if (music.ctx && music.ctx.close) music.ctx.close(); }
+    const o = Object.assign({}, MUSIC_OPTS, { seed: seed, volume: musicVolumeTarget() });
+    music = new Minstrel(o);
+    music.start();                                  // must be inside a real input event
+  }
+  function musicStop() {
+    if (!music) return;
+    music.stop();
+    if (music.ctx && music.ctx.close) music.ctx.close();
+    music = null;
+  }
+
+  // ---- fake ads: a stand-in for the portal SDK, kept out of this game's folder ----
+  const HAS_ADS = (typeof window.FakeAds !== "undefined");
+  if (HAS_ADS) {
+    FakeAds.configure({
+      minSeconds: 5,
+      onOpen:  () => { adOpen = true;  duck(true);  },   // mute on adStarted
+      onClose: () => { adOpen = false; duck(false); }
+    });
+  }
+
+  // ---- starfield: pre-rendered once to an offscreen canvas, blitted per frame ----
+  const stars = document.createElement("canvas");
+  stars.width = W; stars.height = H;
+  (function buildStars() {
+    const sc = stars.getContext("2d");
+    let st = 987654321;
+    const srng = () => { st = (st * 1103515245 + 12345) & 0x7fffffff; return st / 0x7fffffff; };
+    for (let i = 0; i < 110; i++) {
+      const x = srng() * W, y = srng() * H;
+      const r = srng() * 1.3 + 0.25, a = srng() * 0.55 + 0.12;
+      const hue = srng() < 0.25 ? "190,215,255" : "235,235,255";
+      sc.globalAlpha = a;
+      sc.fillStyle = "rgb(" + hue + ")";
+      sc.beginPath(); sc.arc(x, y, r, 0, Math.PI * 2); sc.fill();
+      if (r > 1.15) {   // soft glow on the few bright ones
+        sc.globalAlpha = a * 0.28;
+        sc.beginPath(); sc.arc(x, y, r * 3.2, 0, Math.PI * 2); sc.fill();
+      }
+    }
+    sc.globalAlpha = 1;
+  })();
+
+  // ---- juice state: particles, score popups, screen shake ----
+  let parts = [], pops = [], shake = 0;
+
+  function spawnBurst(x, y, tier) {
+    const t = TIERS[tier];
+    const n = 9 + tier * 5;
+    for (let i = 0; i < n; i++) {
+      const ang = rng() * Math.PI * 2;
+      const spd = 60 + rng() * (90 + tier * 26);
+      parts.push({ x, y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 40,
+                   r: 1.4 + rng() * 2.6, life: 0.5 + rng() * 0.35, max: 0, a: t.b, g: t.a });
+    }
+    for (const p of parts) if (!p.max) p.max = p.life;
+    shake = Math.min(9, 2.2 + tier * 1.35);
+  }
+  function spawnPop(x, y, txt) { pops.push({ x, y, txt, life: 0.75, max: 0.75 }); }
+
+  // ---- economy helpers ----
+  function topTier() { let t = 0; for (const b of bodies) if (b.tier > t) t = b.tier; return t; }
+  function undoCost() { return UNDO_BASE + topTier() * UNDO_STEP; }
+  function reviveCost() { return REVIVE_BASE + topTier() * REVIVE_STEP; }
+
+  function setState(s) {
+    state = s;
+    document.title = "STARWELL-" + s.toUpperCase();
+    smoke.setAttribute("data-state", s);
+    titleScreen.classList.toggle("hidden", s !== "title");
+    overScreen.classList.toggle("hidden", s !== "over");
+    hud.classList.toggle("hidden", s !== "play");
+    undoWrap.classList.toggle("show", s === "play" && bodies.length > 0);
+    banner.classList.toggle("hidden", s !== "title");
+    if (s === "title") elColl.textContent = "Collection " + (((save.maxTier ?? -1) + 1)) + "/" + TIERS.length;
+    if (s === "over") syncOverPrices();
+  }
+
+  function syncOverPrices() {
+    const rc = reviveCost();
+    reviveRow.style.display = reviveUsedThisSession ? "none" : "";
+    btnReviveCoins.textContent = "Coins: clear (" + rc + ")";
+    btnReviveCoins.disabled = coins < rc;
+    elHint.textContent = reviveUsedThisSession ? "Revive already used this session."
+                                               : "You have " + coins + " coins.";
+  }
+
+  function newRun() {
+    bodies = []; score = 0; coins = RUN_STIPEND; overAccum = 0; mergeFlash = [];
+    parts = []; pops = []; shake = 0;
+    nextTier = randSpawn(); pointerX = W / 2;
+    setState("play");
+    held = { x: pointerX, tier: nextTier };
+    undoWrap.classList.remove("show");
+  }
+
+  // ---- pointer ----
+  function pointerToLogical(clientX) {
+    const r = cv.getBoundingClientRect();
+    return (clientX - r.left) * (W / r.width);
+  }
+  function onMove(clientX) {
+    pointerX = Math.max(LEFT, Math.min(RIGHT, pointerToLogical(clientX)));
+    if (held) held.x = pointerX;
+  }
+  function drop() {
+    if (state !== "play" || !held || adOpen) return;
+    const t = held.tier, r = TIERS[t].r;
+    const x = Math.max(LEFT + r, Math.min(RIGHT - r, held.x));
+    bodies.push({ x, y: CEIL - r - 4, vx: 0, vy: 40, r, tier: t, over: 0, dead: false }); sfxDrop();
+    held = null; nextTier = randSpawn();
+    setTimeout(() => { if (state === "play" && !adOpen) held = { x: pointerX, tier: nextTier }; }, 320);
+  }
+  cv.addEventListener("mousemove", e => onMove(e.clientX));
+  cv.addEventListener("mousedown", e => { onMove(e.clientX); drop(); });
+  cv.addEventListener("touchstart", e => { e.preventDefault(); onMove(e.touches[0].clientX); }, { passive:false });
+  cv.addEventListener("touchend",   e => { e.preventDefault(); drop(); }, { passive:false });
+  cv.addEventListener("touchmove",  e => { e.preventDefault(); onMove(e.touches[0].clientX); }, { passive:false });
+
+  // ---- physics: fixed timestep, position-corrected circle collisions ----
+  function step(dt) {
+    for (const b of bodies) {
+      b.vy += G * dt; b.x += b.vx * dt; b.y += b.vy * dt;
+      if (b.x - b.r < LEFT)  { b.x = LEFT + b.r;  b.vx = Math.abs(b.vx) * REST; }
+      if (b.x + b.r > RIGHT) { b.x = RIGHT - b.r; b.vx = -Math.abs(b.vx) * REST; }
+      if (b.y + b.r > FLOOR) { b.y = FLOOR - b.r; b.vy = -Math.abs(b.vy) * REST; b.vx *= FRIC; }
+    }
+    for (let i = 0; i < bodies.length; i++) {
+      for (let j = i + 1; j < bodies.length; j++) {
+        const a = bodies[i], b = bodies[j];
+        if (a.dead || b.dead) continue;
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let d = Math.hypot(dx, dy) || 0.0001;
+        const minD = a.r + b.r;
+        if (d >= minD) continue;
+        if (a.tier === b.tier && a.tier < TIERS.length - 1) {
+          a.dead = b.dead = true;
+          const nt = a.tier + 1, nr = TIERS[nt].r;
+          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          bodies.push({ x: mx, y: my, vx: (a.vx + b.vx) / 2, vy: (a.vy + b.vy) / 2, r: nr, tier: nt, over: 0, dead: false });
+          const gain = TRI[nt] - TRI[a.tier];
+          score += gain; coins += Math.max(1, Math.floor(gain / 4));
+          mergeFlash.push({ x: mx, y: my, r: nr, t: 0.45, max: 0.45 }); sfxMerge(nt);
+          spawnBurst(mx, my, nt);
+          spawnPop(mx, my, "+" + gain);
+          if (navigator.vibrate) navigator.vibrate(nt >= 3 ? [18, 38, 22] : 16);
+          if (nt > (save.maxTier ?? -1)) { save.maxTier = nt; persist(); }
+          continue;
+        }
+        const nx = dx / d, ny = dy / d, push = (minD - d);
+        const ma = a.r * a.r, mb = b.r * b.r, tot = ma + mb;
+        a.x -= nx * push * (mb / tot); a.y -= ny * push * (mb / tot);
+        b.x += nx * push * (ma / tot); b.y += ny * push * (ma / tot);
+        const rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (rvn < 0) {
+          const imp = -(1 + REST) * rvn / (1 / ma + 1 / mb);
+          a.vx -= imp * nx / ma; a.vy -= imp * ny / ma;
+          b.vx += imp * nx / mb; b.vy += imp * ny / mb;
+        }
+      }
+    }
+    bodies = bodies.filter(b => !b.dead);
+  }
+
+  function checkOver(dt) {
+    let over = false;
+    for (const b of bodies) {
+      const speed = Math.hypot(b.vx, b.vy);
+      const top = b.y - b.r;
+      if (top < CEIL && speed < 150) b.over += dt;          // resting above the line
+      else if (top > CEIL + 20) b.over = 0;                 // hysteresis: clear reset
+      if (b.over > OVER_TIME) over = true;
+    }
+    if (over) { endRun(); return true; }
+    return false;
+  }
+
+  function endRun() {
+    if (state !== "play") return;
+    sfxOver(); musicStop();
+    games++;
+    if (score > (save.best ?? 0)) { save.best = score; persist(); elNewBest.textContent = "New best!"; }
+    else elNewBest.textContent = "";
+    elFinal.textContent = score;
+    setState("over");
+  }
+
+  // ---- rewarded revive: the ad path and the coin path both land here ----
+  function doRevive(why) {
+    reviveUsedThisSession = true;
+    for (let k = 0; k < 3; k++) {
+      const lowest = bodies.reduce((m, b) => (!m || b.y > m.y) ? b : m, null);
+      if (lowest) bodies.splice(bodies.indexOf(lowest), 1);
+    }
+    overAccum = 0; for (const b of bodies) b.over = 0;
+    setState("play"); held = { x: pointerX, tier: nextTier };
+    elHint.textContent = "Bottom cleared — 2s protection. (" + why + ")";
+    musicStart();
+  }
+
+  // ---- rewards ----
+  document.getElementById("btnPlay").addEventListener("click", () => { seedMode = false; newRun(); musicStart(); });
+  document.getElementById("btnAgain").addEventListener("click", () => {
+    // MIDGAME AD GATE — requested here, on the restart click, after the summary was shown.
+    // Suppressed for the first two game-overs to protect the opening minutes.
+    if (games >= 2) requestMidgame();
+    newRun(); musicStart();
+  });
+  document.getElementById("btnDaily").addEventListener("click", () => {
+    seedMode = true; rngState = dailySeed(); newRun(); musicStart();
+  });
+  document.getElementById("btnSkip").addEventListener("click", () => { elHint.textContent = "No ad shown."; });
+  btnRevive.addEventListener("click", () => {
+    if (reviveUsedThisSession) return;
+    if (!HAS_ADS) { doRevive("no ad module loaded"); return; }
+    elHint.textContent = "Loading ad…";
+    FakeAds.rewarded({ minSeconds: 5 }).then(r => {
+      if (r.rewarded) doRevive("ad watched");
+      else { elHint.textContent = "Reward not earned — the ad was skipped."; syncOverPrices(); }
+    });
+  });
+  btnReviveCoins.addEventListener("click", () => {
+    if (reviveUsedThisSession) return;
+    const c = reviveCost();
+    if (coins < c) { elHint.textContent = "Need " + c + " coins — you have " + coins + "."; return; }
+    coins -= c;
+    doRevive("bought for " + c + " coins");
+  });
+  btnUndo.addEventListener("click", () => {
+    // REWARDED UNDO — the non-ad path spends coins; the price climbs with the stack.
+    if (state !== "play" || bodies.length === 0) return;
+    const c = undoCost();
+    if (coins < c) { elHint.textContent = "Undo costs " + c + " coins — you have " + coins + "."; return; }
+    coins -= c;
+    const last = bodies[bodies.length - 1];
+    bodies.splice(bodies.length - 1, 1);
+    held = { x: last.x, tier: last.tier };
+    undoWrap.classList.remove("show");
+  });
+  btnMute.addEventListener("click", () => setMuted(!muted));
+  window.addEventListener("keydown", e => { if (e.key === "m" || e.key === "M") setMuted(!muted); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) last = performance.now(); });
+
+  function requestMidgame() {
+    // MIDGAME AD — the fake stand-in. Swap this one call for the real SDK later.
+    if (!HAS_ADS) { console.log("[ads] midgame requested at game-over restart #" + games); return; }
+    FakeAds.interstitial({ minSeconds: 5 });
+  }
+  function dailySeed() { const d = new Date(); return (d.getFullYear() * 10000 + (d.getMonth()+1) * 100 + d.getDate()) | 0; }
+
+  // ---- render ----
+  function drawBody(b, alpha) {
+    const t = TIERS[b.tier];
+    const g = ctx.createRadialGradient(b.x - b.r * .35, b.y - b.r * .4, b.r * .1, b.x, b.y, b.r);
+    g.addColorStop(0, t.b); g.addColorStop(1, t.a);
+    ctx.globalAlpha = alpha ?? 1;
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  function render() {
+    ctx.save();
+    if (shake > 0.15) {
+      const s = shake;
+      ctx.translate((rng() * 2 - 1) * s, (rng() * 2 - 1) * s);
+    } else { shake = 0; }
+    ctx.clearRect(-20, -20, W + 40, H + 40);
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, "#0b0c1e"); bg.addColorStop(1, "#05060f");
+    ctx.fillStyle = bg; ctx.fillRect(-20, -20, W + 40, H + 40);
+
+    // starfield, with a slight parallax drift toward the pointer
+    const par = (pointerX - W / 2) * 0.022;
+    ctx.globalAlpha = 1; ctx.drawImage(stars, par, 0);
+    if (par > 0.2) ctx.drawImage(stars, par - W, 0);
+    else if (par < -0.2) ctx.drawImage(stars, par + W, 0);
+
+    // well walls
+    ctx.strokeStyle = "rgba(130,130,220,.35)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(LEFT, CEIL); ctx.lineTo(LEFT, FLOOR);
+    ctx.lineTo(RIGHT, FLOOR); ctx.lineTo(RIGHT, CEIL); ctx.stroke();
+
+    // danger line — lights up when the stack approaches it
+    let tallest = 0;
+    for (const b of bodies) tallest = Math.max(tallest, FLOOR - (b.y - b.r));
+    const danger = tallest > (FLOOR - CEIL) * 0.82;
+    ctx.setLineDash([8, 8]); ctx.strokeStyle = danger ? "rgba(255,90,90,.9)" : "rgba(255,255,255,.18)";
+    ctx.beginPath(); ctx.moveTo(LEFT, CEIL); ctx.lineTo(RIGHT, CEIL); ctx.stroke(); ctx.setLineDash([]);
+
+    for (const b of bodies) drawBody(b);
+    for (const f of mergeFlash) {
+      const p = f.t / f.max;
+      ctx.globalAlpha = p * 0.7; ctx.lineWidth = 3;
+      ctx.strokeStyle = "#bfe0ff";
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (1 + (1 - p) * 0.9), 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // merge particle burst
+    for (const p of parts) {
+      const lp = p.life / p.max;
+      ctx.globalAlpha = lp * 0.95;
+      const pg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
+      pg.addColorStop(0, p.a); pg.addColorStop(1, p.g);
+      ctx.fillStyle = pg;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // floating score popups
+    ctx.textAlign = "center"; ctx.font = "700 13px system-ui";
+    for (const q of pops) {
+      const lp = q.life / q.max;
+      ctx.globalAlpha = Math.min(1, lp * 1.6);
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,4,14,.85)";
+      ctx.strokeText(q.txt, q.x, q.y);
+      ctx.fillStyle = "#dff0ff";
+      ctx.fillText(q.txt, q.x, q.y);
+    }
+    ctx.globalAlpha = 1;
+
+    if (held) {
+      const t = TIERS[held.tier];
+      ctx.globalAlpha = .35; ctx.setLineDash([4, 6]); ctx.strokeStyle = "#8ab6ff";
+      ctx.beginPath(); ctx.moveTo(held.x, CEIL); ctx.lineTo(held.x, FLOOR); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      drawBody({ x: held.x, y: CEIL - t.r - 4, r: t.r, tier: held.tier }, .92);
+      ctx.fillStyle = "rgba(255,255,255,.5)"; ctx.font = "10px system-ui";
+      ctx.textAlign = "center"; ctx.fillText("NEXT: " + t.n, held.x, 92);
+    }
+    if (state === "play") {
+      elScore.textContent = score; elCoins.textContent = coins;
+      elBest.textContent = save.best ?? 0;
+      if (bodies.length > 0) undoWrap.classList.add("show");
+      btnUndo.textContent = "Undo last drop · " + undoCost() + " coins";
+      btnUndo.disabled = coins < undoCost();
+    }
+    ctx.restore();
+  }
+
+  // ---- loop: accumulator so physics is frame-rate independent ----
+  let acc = 0, last = performance.now();
+  function frame(now) {
+    const real = Math.min((now - last) / 1000, 0.05); last = now;
+    if (state === "play" && !adOpen) {
+      acc += real;
+      const target = DT;
+      let steps = 0;
+      while (acc >= target && steps < 12) {
+        for (let s = 0; s < SUB; s++) step(target / SUB);
+        if (checkOver(target)) { acc = 0; break; }
+        acc -= target; steps++;
+      }
+      for (const f of mergeFlash) f.t -= real;
+      mergeFlash = mergeFlash.filter(f => f.t > 0);
+      for (const p of parts) {
+        p.vy += 420 * real; p.x += p.vx * real; p.y += p.vy * real;
+        p.vx *= 0.94; p.life -= real;
+      }
+      parts = parts.filter(p => p.life > 0);
+      for (const q of pops) { q.y -= 34 * real; q.life -= real; }
+      pops = pops.filter(q => q.life > 0);
+      if (shake > 0) { shake -= real * 42; if (shake < 0) shake = 0; }
+    }
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  // ---- smoke interface ----
+  window.__game = {
+    debug: () => ({
+      state, score, coins, bodies: bodies.length, nextTier: TIERS[nextTier].n,
+      maxTier: save.maxTier ?? -1, best: save.best ?? 0, games, dpr, seedMode,
+      tierRadii: TIERS.map(t => t.r),
+      totalArea: Math.round(bodies.reduce((s, b) => s + Math.PI * b.r * b.r, 0)),
+      topTier: topTier(), undoCost: undoCost(), reviveCost: reviveCost(),
+      muted, hasAds: HAS_ADS, adOpen, reviveUsed: reviveUsedThisSession,
+      stageFontPx: parseFloat(stage.style.fontSize) || 0
+    }),
+    newRun, endRun, drop,
+    setPointer: (x) => onMove(x),
+    setMuted, _bodies: () => bodies,
+    // music handle for probes: the engine owns its own AudioContext, so this is the only
+    // way to assert on it headlessly (headless Chrome keeps that ctx suspended).
+    music: () => music ? {
+      seed: music.seed, playing: music.playing, volume: music.volume,
+      bar: music.bar, barsScheduled: music.bars.length,
+      groove: music.grooveName, palette: music.paletteName, prog: music.progIndex,
+      octave: music.octave, ctxState: music.ctx ? music.ctx.state : "none"
+    } : null
+  };
+
+  syncMuteBtn();
+  setState("title");
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  CONDUIT — game #3. Single file, zero deps, no server. Built on the shape of
+  skills/game-delivery/browser-portal-games/templates/playable-seed.html:
+  fixed logical space, fixed timestep, one input path, seeded RNG + daily seed,
+  #smoke state and a __game probe surface. Logic replaced, harness kept.
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>CONDUIT-boot</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; background:#05060f; overflow:hidden; overscroll-behavior:none;
+              font-family:system-ui,sans-serif; color:#e8e8f2; }
+  #app { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  #stage { position:relative; }
+  canvas { display:block; touch-action:none; }
+  .overlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+             justify-content:center; gap:10px; text-align:center; pointer-events:none;
+             background:radial-gradient(circle at 50% 40%, rgba(20,30,70,.55), rgba(4,4,12,.93)); }
+  .overlay.hidden, #hud.hidden { display:none; }
+  #hud { position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between;
+         padding:14px 20px; font-size:13px; letter-spacing:.08em; pointer-events:none; }
+  #hud b { display:block; font-size:20px; letter-spacing:0; margin-top:2px; }
+  #overScreen h1 { font-size:52px; font-weight:700; }
+  #overScreen .sub { font-size:13px; opacity:.75; letter-spacing:.1em; }
+  #overScreen .hint { margin-top:14px; font-size:12px; letter-spacing:.14em; opacity:.6; animation:blink 1.4s infinite; }
+  @keyframes blink { 0%,100%{opacity:.25} 50%{opacity:.85} }
+  #smoke { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; }
+</style>
+</head>
+<body>
+<div id="app"><div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="hud" class="hidden">
+    <span>SCORE<b id="score">0</b></span>
+    <span>DEPTH<b id="depth">0</b></span>
+    <span>BEST<b id="best">0</b></span>
+  </div>
+  <div class="overlay hidden" id="overScreen">
+    <div class="sub">RUN OVER</div>
+    <h1 id="finalScore">0</h1>
+    <div class="sub">BEST <span id="finalBest">0</span> &middot; DEPTH <span id="finalDepth">0</span></div>
+    <div class="hint">TAP TO PLAY AGAIN</div>
+  </div>
+  <div id="smoke" data-state="loading"></div>
+</div></div>
+<script>
+"use strict";
+(function () {
+  // ---------- logical space; canvas scaled to fit, DPR capped at 2 ----------
+  const W = 400, H = 640;
+  const BOARD = 360, BX = (W - BOARD) / 2, BY = 120;   // board square, top-left logical
+  const DT = 1 / 240, SUB = 4;                         // FIXED timestep — refresh-rate independent
+
+  // sides: 0=right 1=down 2=left 3=up ; travel dir uses the same numbering
+  const DC = [1, 0, -1, 0], DR = [0, 1, 0, -1];
+  const opp = (s) => (s + 2) % 4;
+
+  // ---------- seeded RNG — NEVER Math.random() for game state ----------
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function hash32(n) {
+    let h = n >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+    return (h ^ (h >>> 16)) >>> 0;
+  }
+  const urlSeed = new URLSearchParams(location.search).get("seed");
+  const SEED = urlSeed !== null ? (parseInt(urlSeed, 10) || 0) : (Date.now() / 86400000 | 0);
+
+  const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  const stage = document.getElementById("stage"), smoke = document.getElementById("smoke");
+  const hud = document.getElementById("hud");
+  const overScreen = document.getElementById("overScreen");
+  const elScore = document.getElementById("score"), elDepth = document.getElementById("depth");
+  const elBest = document.getElementById("best"), elFinal = document.getElementById("finalScore");
+  const elFinalBest = document.getElementById("finalBest"), elFinalDepth = document.getElementById("finalDepth");
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function fit() {
+    const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    stage.style.width = Math.round(W * s) + "px";
+    stage.style.height = Math.round(H * s) + "px";
+    cv.width = Math.round(W * s * dpr); cv.height = Math.round(H * s * dpr);
+    cv.style.width = cv.width + "px"; cv.style.height = cv.height + "px";
+    ctx.setTransform(dpr * s, 0, 0, dpr * s, 0, 0);
+  }
+  window.addEventListener("resize", fit); fit();
+
+  const KEY = "conduit.best";
+  const save = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } })();
+  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(save)); } catch (e) {} };
+
+  // ---------- tile geometry ----------
+  function baseOpenings(type, o) {
+    o = ((o % 4) + 4) % 4;
+    if (type === "straight") return [o % 4, (o + 2) % 4];
+    if (type === "elbow") return [o % 4, (o + 1) % 4];
+    return [];                                  // terminals carry an explicit open list
+  }
+  function tileOpenings(t) { return t.open ? t.open : baseOpenings(t.type, t.orient); }
+  function findOrient(type, a, b) {
+    for (let o = 0; o < 4; o++) { const s = baseOpenings(type, o); if (s.indexOf(a) >= 0 && s.indexOf(b) >= 0) return o; }
+    return 0;
+  }
+
+  // ---------- layout generation: seeded, monotone, always solvable ----------
+  function travelDir(a, b) { if (b[0] > a[0]) return 0; if (b[0] < a[0]) return 2; if (b[1] > a[1]) return 1; return 3; }
+
+  function gen(depth, noDecoys) {
+    const G = depth < 2 ? 5 : depth < 4 ? 6 : 7;
+    const rnd = mulberry32(hash32(((SEED >>> 0) + Math.imul(depth + 1, 0x9E3779B1)) >>> 0));
+    const r0 = (rnd() * G) | 0, r1 = (rnd() * G) | 0;
+
+    const path = []; let c = 0, r = r0; path.push([c, r]);
+    let guard = 0;
+    while (!(c === G - 1 && r === r1) && guard++ < 400) {
+      if (c === G - 1) { r += r1 > r ? 1 : -1; }
+      else if (r === r1) { c += 1; }
+      else if (rnd() < 0.5) { r += r1 > r ? 1 : -1; }
+      else { c += 1; }
+      path.push([c, r]);
+    }
+
+    const tiles = new Map();
+    const K = (cc, rr) => rr * G + cc;
+
+    const src = { c: path[0][0], r: path[0][1] };
+    const firstDir = path.length > 1 ? travelDir(path[0], path[1]) : 0;
+    tiles.set(K(src.c, src.r), { c: src.c, r: src.r, type: "source", orient: 0, open: [firstDir], path: true, sol: null });
+
+    const dn = path[path.length - 1];
+    const lastDir = path.length > 1 ? travelDir(path[path.length - 2], path[path.length - 1]) : 0;
+    tiles.set(K(dn[0], dn[1]), { c: dn[0], r: dn[1], type: "drain", orient: 0, open: [opp(lastDir)], path: true, sol: null });
+
+    for (let i = 1; i < path.length - 1; i++) {
+      const a = path[i - 1], b = path[i], e = path[i + 1];
+      const inSide = opp(travelDir(a, b));      // side the flow enters through
+      const outSide = travelDir(b, e);
+      const type = (inSide === opp(outSide)) ? "straight" : "elbow";
+      const sol = findOrient(type, inSide, outSide);
+      tiles.set(K(b[0], b[1]), { c: b[0], r: b[1], type, orient: (rnd() * 4) | 0, open: null, path: true, sol });
+    }
+
+    if (!noDecoys) {
+      const decoyP = Math.min(0.5, 0.25 + 0.03 * depth);
+      for (let cc = 0; cc < G; cc++) for (let rr = 0; rr < G; rr++) {
+        if (tiles.has(K(cc, rr))) continue;
+        if (rnd() < decoyP) {
+          const type = rnd() < 0.5 ? "straight" : "elbow";
+          tiles.set(K(cc, rr), { c: cc, r: rr, type, orient: (rnd() * 4) | 0, open: null, path: false, sol: null });
+        }
+      }
+    }
+    return { G, src, drain: { c: dn[0], r: dn[1] }, firstDir, path, tiles };
+  }
+
+  // pure simulation of a layout — shared by the game's proof and the probe
+  function simOpenings(t, useSol) {
+    if (t.open) return t.open;
+    if (useSol && t.sol != null) return baseOpenings(t.type, t.sol);
+    return baseOpenings(t.type, t.orient);
+  }
+  function simulate(L, useSol) {
+    let c = L.src.c, r = L.src.r, dir = L.firstDir;
+    const lim = L.G * L.G * 4;
+    for (let i = 0; i < lim; i++) {
+      const nc = c + DC[dir], nr = r + DR[dir];
+      if (nc < 0 || nc >= L.G || nr < 0 || nr >= L.G) return { res: "dead", steps: i };
+      const t = L.tiles.get(nr * L.G + nc);
+      if (!t) return { res: "dead", steps: i };
+      const ops = simOpenings(t, useSol);
+      if (ops.indexOf(opp(dir)) < 0) return { res: "dead", steps: i };
+      if (t.type === "drain") return { res: "drain", steps: i + 1 };
+      c = nc; r = nr;
+      const rem = ops.filter((s) => s !== opp(dir));
+      dir = rem.length ? rem[0] : dir;
+    }
+    return { res: "loop", steps: lim };
+  }
+
+  // ---------- game state ----------
+  let state = "play", score = 0, depth = 0, tick = 0;
+  let L = null, G = 5, head = null, started = false, beatT = 0, beatMsOverride = null;
+  let readIn = 0, readInMs = 0;                       // frozen window at the start of each board
+  let flash = 0, deadFlash = 0;
+
+  const beatMs = () => beatMsOverride != null ? beatMsOverride : Math.max(300, 1000 - 45 * depth);
+  const cellPx = () => BOARD / G;
+  const tileAt = (c, r) => L.tiles.get(r * G + c) || null;
+
+  function setState(s) {
+    state = s;
+    document.title = "CONDUIT-" + s.toUpperCase();
+    smoke.setAttribute("data-state", s);
+    overScreen.classList.toggle("hidden", s !== "over");
+    hud.classList.toggle("hidden", s !== "play");
+  }
+
+  function newLayout(d) {
+    L = gen(d); G = L.G;
+    head = { c: L.src.c, r: L.src.r, dir: L.firstDir, cx: L.src.c + 0.5, cy: L.src.r + 0.5 };
+    beatT = 0;
+    // READ-IN: every new board is frozen for a fair look before the flow goes live.
+    // Larger boards at depth get a little longer. Taps still rotate tiles during it.
+    readInMs = Math.min(3000, 1800 + 120 * d);
+    readIn = readInMs / 1000;
+    started = false;
+  }
+  function newRun() {
+    score = 0; depth = 0; started = false; tick = 0; beatT = 0; beatMsOverride = null;
+    flash = 0; deadFlash = 0;
+    newLayout(0); setState("play");
+  }
+
+  function complete() {
+    score += 100 + 10 * depth;
+    depth++;
+    newLayout(depth);
+    flash = 0.35;
+  }
+  function die() {
+    if (state !== "play") return;
+    if (score > (save.best || 0)) { save.best = score; persist(); }
+    elFinal.textContent = String(score);
+    elFinalBest.textContent = String(save.best || 0);
+    elFinalDepth.textContent = String(depth);
+    deadFlash = 0.4;
+    setState("over");
+  }
+  function advance() {
+    if (state !== "play") return;
+    const nc = head.c + DC[head.dir], nr = head.r + DR[head.dir];
+    if (nc < 0 || nc >= G || nr < 0 || nr >= G) return die();
+    const t = tileAt(nc, nr);
+    if (!t) return die();
+    const ops = tileOpenings(t);
+    if (ops.indexOf(opp(head.dir)) < 0) return die();
+    head.c = nc; head.r = nr;
+    if (t.type === "drain") return complete();
+    const rem = ops.filter((s) => s !== opp(head.dir));
+    head.dir = rem.length ? rem[0] : head.dir;
+  }
+
+  function rotate(c, r) {
+    if (state !== "play") return false;
+    const t = tileAt(c, r);
+    if (!t || (t.type !== "straight" && t.type !== "elbow")) return false;
+    t.orient = (t.orient + 1) % 4;
+    return true;
+  }
+
+  // ---------- ONE input path for mouse and touch, mapped through the canvas rect ----------
+  function toCell(clientX, clientY) {
+    const rect = cv.getBoundingClientRect();
+    const lx = (clientX - rect.left) * (W / rect.width);
+    const ly = (clientY - rect.top) * (H / rect.height);
+    if (lx < BX || ly < BY) return null;
+    const cell = cellPx();
+    const c = Math.floor((lx - BX) / cell), r = Math.floor((ly - BY) / cell);
+    if (c < 0 || c >= G || r < 0 || r >= G) return null;
+    return { c, r };
+  }
+  function onPointer(clientX, clientY, real) {
+    if (state === "over") { if (real) newRun(); return; }
+    if (state !== "play") return;
+    const cell = toCell(clientX, clientY);
+    if (!cell) return;
+    rotate(cell.c, cell.r);
+  }
+  stage.addEventListener("pointerdown", (e) => { e.preventDefault(); onPointer(e.clientX, e.clientY, true); }, { passive: false });
+
+  // ---------- simulation: fixed timestep, beat-driven ----------
+  function step(dt) {
+    if (state !== "play") return;
+    if (!started) {
+      readIn -= dt;
+      if (readIn > 0) return;              // frozen read-in: the flow waits, taps still rotate
+      started = true;                      // read-in over: the beat goes live
+    }
+    beatT += dt;
+    const bs = beatMs() / 1000;
+    let n = 0;
+    while (beatT >= bs && n++ < 4) { beatT -= bs; advance(); if (state !== "play") { beatT = 0; break; } }
+  }
+
+  // ---------- render ----------
+  const COL = {
+    bg: "#05060f", grid: "#101227", pipe: "#242a58", pipeEdge: "#3a4488",
+    decoy: "#1b2044", src: "#35e0c8", drain: "#ffb347", flow: "#cdf6ff", bar: "#2bd4c0",
+  };
+  function arm(cx, cy, dir, w, len, color) {
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(dir * Math.PI / 2);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-w * 0.1, -w / 2, len + w * 0.1, w, w / 2);
+    else ctx.rect(-w * 0.1, -w / 2, len + w * 0.1, w);
+    ctx.fill(); ctx.restore();
+  }
+  function drawTile(t, cell) {
+    const cx = BX + (t.c + 0.5) * cell, cy = BY + (t.r + 0.5) * cell;
+    const terminal = (t.type === "source" || t.type === "drain");
+    const col = t.type === "source" ? COL.src : t.type === "drain" ? COL.drain : t.path ? COL.pipe : COL.decoy;
+    const ops = tileOpenings(t);
+    for (const s of ops) arm(cx, cy, s, cell * 0.30, cell * 0.56, col);
+    ctx.beginPath(); ctx.arc(cx, cy, cell * (terminal ? 0.24 : 0.19), 0, 7);
+    ctx.fillStyle = col; ctx.fill();
+    if (terminal) {
+      ctx.beginPath(); ctx.arc(cx, cy, cell * 0.30, 0, 7);
+      ctx.strokeStyle = t.type === "drain" ? COL.drain : COL.src;
+      ctx.globalAlpha = 0.5 + 0.5 * Math.abs(Math.sin(tick * 0.05));
+      ctx.lineWidth = cell * 0.06; ctx.stroke(); ctx.globalAlpha = 1;
+    }
+  }
+  function render(now) {
+    ctx.fillStyle = COL.bg; ctx.fillRect(0, 0, W, H);
+    const cell = cellPx();
+
+    // board frame + empty-cell dots
+    ctx.fillStyle = COL.grid;
+    ctx.fillRect(BX, BY, BOARD, BOARD);
+    ctx.fillStyle = "rgba(255,255,255,.05)";
+    for (let c = 0; c < G; c++) for (let r = 0; r < G; r++) {
+      ctx.beginPath(); ctx.arc(BX + (c + 0.5) * cell, BY + (r + 0.5) * cell, 1.6, 0, 7); ctx.fill();
+    }
+
+    for (const t of L.tiles.values()) drawTile(t, cell);
+
+    // the flow
+    if (head) {
+      const dt = Math.min((now - last) / 1000, 0.05);
+      head.cx += ((head.c + 0.5) - head.cx) * Math.min(1, dt * 12);
+      head.cy += ((head.r + 0.5) - head.cy) * Math.min(1, dt * 12);
+      const px = BX + head.cx * cell, py = BY + head.cy * cell;
+      const g = ctx.createRadialGradient(px, py, 0, px, py, cell * 0.75);
+      g.addColorStop(0, "rgba(205,246,255,.95)"); g.addColorStop(0.35, "rgba(120,220,255,.55)");
+      g.addColorStop(1, "rgba(80,180,255,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px, py, cell * 0.75, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(px, py, cell * 0.16, 0, 7); ctx.fillStyle = COL.flow; ctx.fill();
+    }
+
+    // beat bar under the board
+    const bx = BX, by = BY + BOARD + 22, bw = BOARD, bh = 6;
+    ctx.fillStyle = "rgba(255,255,255,.09)";
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 3); ctx.fill(); }
+    else ctx.fillRect(bx, by, bw, bh);
+    if (state === "play") {
+      const frac = started
+        ? Math.max(0, Math.min(1, beatT / (beatMs() / 1000)))
+        : Math.max(0, Math.min(1, 1 - readIn / (readInMs / 1000)));
+      ctx.fillStyle = started ? COL.bar : "#5a5f8a";
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(bx, by, Math.max(2, bw * frac), bh, 3); ctx.fill(); }
+      else ctx.fillRect(bx, by, Math.max(2, bw * frac), bh);
+    }
+
+    // hints
+    ctx.textAlign = "center";
+    if (state === "play" && !started) {
+      ctx.fillStyle = "rgba(205,246,255,.55)"; ctx.font = "600 13px system-ui,sans-serif";
+      ctx.fillText("READ THE BOARD", W / 2, by + 34);
+    } else if (state === "play") {
+      ctx.fillStyle = "rgba(255,255,255,.22)"; ctx.font = "12px system-ui,sans-serif";
+      ctx.fillText("tap a pipe to turn it", W / 2, by + 34);
+    }
+
+    // flashes
+    if (flash > 0 || deadFlash > 0) {
+      const a = Math.max(flash, deadFlash);
+      ctx.fillStyle = deadFlash > 0 ? "rgba(255,80,80," + (a * 0.5) + ")" : "rgba(120,255,230," + (a * 0.5) + ")";
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    if (state === "play") {
+      elScore.textContent = String(score);
+      elDepth.textContent = String(depth);
+      elBest.textContent = String(save.best || 0);
+    }
+  }
+
+  let acc = 0, last = performance.now();
+  function frame(now) {
+    const real = Math.min((now - last) / 1000, 0.05); last = now;
+    if (flash > 0) flash = Math.max(0, flash - real);
+    if (deadFlash > 0) deadFlash = Math.max(0, deadFlash - real);
+    if (state === "play") {
+      acc += real;
+      let n = 0;
+      while (acc >= DT && n < 12) {
+        for (let i = 0; i < SUB; i++) step(DT / SUB);
+        tick++;
+        if (state !== "play") { acc = 0; break; }
+        acc -= DT; n++;
+      }
+    }
+    render(now);
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- probe surface: the REAL objects, not the drawing ----------
+  function sig(Lx) {
+    const parts = [];
+    for (let r = 0; r < Lx.G; r++) for (let c = 0; c < Lx.G; c++) {
+      const t = Lx.tiles.get(r * Lx.G + c);
+      if (t) parts.push(c + "," + r + "," + t.type + "," + t.orient + "," + (t.open ? t.open[0] : "-") + "," + (t.path ? 1 : 0));
+    }
+    return Lx.G + "|" + Lx.src.c + "," + Lx.src.r + "," + Lx.firstDir + "|" + parts.join(";");
+  }
+  window.__game = {
+    debug: () => ({
+      state, score, depth, best: save.best || 0, seed: SEED, tick, g: G, started,
+      beatMs: beatMs(), readIn, readInMs, head: head ? { c: head.c, r: head.r, dir: head.dir } : null,
+      tiles: L ? L.tiles.size : 0, pathLen: L ? L.path.length : 0,
+    }),
+    newRun, rotate, setState,
+    get seed() { return SEED; },
+    get tick() { return tick; },
+    get depth() { return depth; },
+    _tiles: () => L ? Array.from(L.tiles.values()) : [],
+    _layout: () => L,
+    _tileAt: (c, r) => tileAt(c, r),
+    _gen: (d, noDecoys) => gen(d, !!noDecoys),
+    _genSig: (d) => sig(gen(d, false)),
+    _simulateSolved: (d, noDecoys) => simulate(gen(d, !!noDecoys), true),
+    _advance: () => { advance(); return state; },
+    _tickBeats: (n) => { for (let i = 0; i < n && state === "play"; i++) advance(); return state; },
+    _solve: () => { for (const t of L.tiles.values()) { if (t.sol != null) { let g2 = 0; while (t.orient !== t.sol && g2++ < 8) t.orient = (t.orient + 1) % 4; } } return true; },
+    _setBeatMs: (ms) => { beatMsOverride = ms; },
+    _startBeat: () => { started = true; },
+    _pointer: (x, y) => onPointer(x, y, true),
+  };
+
+  newRun();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
