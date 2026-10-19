@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <!--
-  SLIPLINE (working title, DRAFT) — concept #2, built from the canonical seed harness
-  C:/Flint/skills/game-delivery/browser-portal-games/templates/playable-seed.html.
-  The harness is intact: fixed logical space, DPR cap 2, fixed timestep, seeded run seed,
-  pinned recalculation, the __game probe hook, ad stubs. The REPLACE sections are this game.
-  It starts IN PLAY — no click-to-start wall (G1).
+  SLIPLINE (working title) — lane-weave arcade.
+  Fixed logical space, DPR cap 2, fixed timestep, seeded run seed, pinned recalculation.
+  It starts IN PLAY — no click-to-start wall.
+  AD-FREE BUILD: no ad module, no ad UI, no ad call sites.
 -->
 <head>
 <meta charset="utf-8">
@@ -44,8 +43,6 @@
   </div>
   <div class="overlay hidden" id="overScreen">
     <div id="finalScore">0</div>
-    <button class="btn" id="btnReward">Watch ad: repair one hull</button>
-    <button class="btn" id="btnSkip">No thanks</button>
     <button class="btn" id="btnAgain">Play again</button>
   </div>
   <div id="smoke" data-state="loading"></div>
@@ -198,13 +195,10 @@
   cv.addEventListener("touchmove",  (e) => { e.preventDefault(); onMove(e.touches[0].clientX); }, { passive: false });
   cv.addEventListener("touchend",   (e) => { e.preventDefault(); act(); }, { passive: false });
 
-  // ---- ad call sites exist at v0 as STUBS; the portal SDK replaces these bodies later ----
-  const requestMidgame = () => console.log("[ads] midgame requested (stub)");
-  const requestReward  = () => console.log("[ads] rewarded requested (stub)");
+  // ---- AD-FREE BUILD: no ad module, no ad UI, no ad call sites. The portal build adds
+  //      its SDK on this line; nothing else in the game changes.
 
-  document.getElementById("btnAgain").addEventListener("click", () => { requestMidgame(); newRun(); });
-  document.getElementById("btnReward").addEventListener("click", requestReward);
-  document.getElementById("btnSkip").addEventListener("click", () => {});   // equal weight to the ad button
+  document.getElementById("btnAgain").addEventListener("click", () => newRun());
 
   function render() {
     ctx.fillStyle = "#05060f"; ctx.fillRect(0, 0, W, H);

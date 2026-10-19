@@ -31,8 +31,6 @@
     font-weight:600; cursor:pointer; letter-spacing:.03em; min-width:0; width:100%; max-width:17em; }
   .btn:hover { background:rgba(120,100,255,.35); }
   .btn:disabled { opacity:.42; cursor:default; }
-  .btn.ad { border-color:rgba(255,205,120,.5); background:rgba(200,150,40,.22); }
-  .btn.ad::before { content:"▶ "; }
   .btn.row { flex:1 1 0; width:auto; max-width:none; padding:0.72em 0.5em; font-size:0.85em; }
   .rowbtns { display:flex; gap:0.5em; width:100%; max-width:17.5em; }
   .linkbtn { background:none; border:0; color:#a9a9cc; font-size:0.78em; cursor:pointer;
@@ -45,14 +43,6 @@
     border:1px solid rgba(160,160,255,.35); background:rgba(26,22,54,.6); color:#dfe3ff;
     font-size:0.8em; line-height:1; cursor:pointer; padding:0; }
   #mute.off { opacity:.5; }
-
-  /* PUBLIC / AD-FREE BUILD: the reserved banner slot is hidden here. The ad build keeps
-     display:flex and swaps this container for the real SDK banner. */
-  #banner { position:absolute; left:50%; transform:translateX(-50%); bottom:0;
-    width:calc(100% - 1.2em); max-width:22em; height:2.9em; background:#101024;
-    border:1px dashed rgba(140,140,220,.35); display:none; align-items:center; justify-content:center;
-    font-size:0.6em; letter-spacing:.18em; opacity:.55; text-transform:uppercase; }
-  #banner.hidden { display:none; }
 
   #hud { position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between;
     padding:0.75em 1.1em; font-size:0.95em; letter-spacing:.08em; pointer-events:none; }
@@ -74,7 +64,6 @@
   </div>
   <button id="mute" type="button" aria-label="Toggle sound" aria-pressed="false">🔊</button>
   <div id="undo"><button class="btn" id="btnUndo">Undo last drop</button></div>
-  <div id="banner">Ad space — reserved</div>
 
   <div class="overlay" id="titleScreen">
     <h1>STARWELL</h1>
@@ -89,12 +78,10 @@
     <div class="score" id="finalScore">0</div>
     <div class="sub" id="newBest"></div>
     <div class="rowbtns" id="reviveRow">
-      <button class="btn ad row" id="btnRevive">Ad: clear bottom</button>
-      <button class="btn row" id="btnReviveCoins">Coins: clear bottom</button>
+      <button class="btn row" id="btnReviveCoins">Clear bottom</button>
     </div>
     <button class="btn" id="btnAgain">Play again</button>
     <div class="sub" id="reviveHint"></div>
-    <button class="linkbtn" id="btnSkip">No thanks</button>
   </div>
 
   <div id="smoke-status" data-state="loading"></div>
@@ -103,9 +90,8 @@
 <!-- Shared procedural music engine (see shared/MUSIC.md). If it 404s the game still runs,
      just silent: musicStart() checks for the global. -->
 <script src="../shared/minstrel.js"></script>
-<!-- PUBLIC / AD-FREE BUILD: the fake-ad stand-in is deliberately NOT loaded here. The game
-     detects its absence (HAS_ADS === false) and every ad path falls back to the coin path.
-     The ad build for CrazyGames keeps <script src="./fakeads.js"> and swaps it for the SDK. -->
+<!-- AD-FREE BUILD: no ad module is loaded and no ad code path runs. The portal build
+     adds its SDK here; the game itself is otherwise unchanged. -->
 <script>
 "use strict";
 /* STARWELL v0 — drop-merge puzzle. Zero deps, zero image assets. Logical space 400x640. */
@@ -119,7 +105,7 @@
   const SUB = 4;               // physics substeps per rendered frame target
   const OVER_TIME = 1.2;       // s a body must sit above the line to end the run
 
-  // ---- coin economy: every rewarded item is also buyable, and the price climbs with how
+  // ---- coin economy: every paid item is buyable, and the price climbs with how
   // much progress is at stake. Tune here — nothing else hardcodes a price.
   const RUN_STIPEND = 5;       // coins a run starts with, so an early undo is affordable
   const UNDO_BASE = 3,  UNDO_STEP = 3;     // undo   = BASE + highestTierOnBoard * STEP
@@ -152,7 +138,6 @@
   const hud = document.getElementById("hud");
   const titleScreen = document.getElementById("titleScreen");
   const overScreen = document.getElementById("overScreen");
-  const banner = document.getElementById("banner");
   const elScore = document.getElementById("score");
   const elCoins = document.getElementById("coins");
   const elBest = document.getElementById("best");
@@ -162,7 +147,6 @@
   const elHint = document.getElementById("reviveHint");
   const undoWrap = document.getElementById("undo");
   const btnUndo = document.getElementById("btnUndo");
-  const btnRevive = document.getElementById("btnRevive");
   const btnReviveCoins = document.getElementById("btnReviveCoins");
   const reviveRow = document.getElementById("reviveRow");
   const btnMute = document.getElementById("mute");
@@ -276,15 +260,9 @@
     music = null;
   }
 
-  // ---- fake ads: a stand-in for the portal SDK, kept out of this game's folder ----
-  const HAS_ADS = (typeof window.FakeAds !== "undefined");
-  if (HAS_ADS) {
-    FakeAds.configure({
-      minSeconds: 5,
-      onOpen:  () => { adOpen = true;  duck(true);  },   // mute on adStarted
-      onClose: () => { adOpen = false; duck(false); }
-    });
-  }
+  // ---- AD-FREE BUILD: this copy has no ad module, no ad UI and no ad call sites.
+  //      The portal build adds the SDK in this spot; nothing else in the game changes. ----
+  const HAS_ADS = false;
 
   // ---- starfield: pre-rendered once to an offscreen canvas, blitted per frame ----
   const stars = document.createElement("canvas");
@@ -338,7 +316,6 @@
     overScreen.classList.toggle("hidden", s !== "over");
     hud.classList.toggle("hidden", s !== "play");
     undoWrap.classList.toggle("show", s === "play" && bodies.length > 0);
-    banner.classList.toggle("hidden", s !== "title");
     if (s === "title") elColl.textContent = "Collection " + (((save.maxTier ?? -1) + 1)) + "/" + TIERS.length;
     if (s === "over") syncOverPrices();
   }
@@ -452,7 +429,7 @@
     setState("over");
   }
 
-  // ---- rewarded revive: the ad path and the coin path both land here ----
+  // ---- revive: one path, paid for with coins ----
   function doRevive(why) {
     reviveUsedThisSession = true;
     for (let k = 0; k < 3; k++) {
@@ -467,24 +444,9 @@
 
   // ---- rewards ----
   document.getElementById("btnPlay").addEventListener("click", () => { seedMode = false; newRun(); musicStart(); });
-  document.getElementById("btnAgain").addEventListener("click", () => {
-    // MIDGAME AD GATE — requested here, on the restart click, after the summary was shown.
-    // Suppressed for the first two game-overs to protect the opening minutes.
-    if (games >= 2) requestMidgame();
-    newRun(); musicStart();
-  });
+  document.getElementById("btnAgain").addEventListener("click", () => { newRun(); musicStart(); });
   document.getElementById("btnDaily").addEventListener("click", () => {
     seedMode = true; rngState = dailySeed(); newRun(); musicStart();
-  });
-  document.getElementById("btnSkip").addEventListener("click", () => { elHint.textContent = "No ad shown."; });
-  btnRevive.addEventListener("click", () => {
-    if (reviveUsedThisSession) return;
-    if (!HAS_ADS) { doRevive("no ad module loaded"); return; }
-    elHint.textContent = "Loading ad…";
-    FakeAds.rewarded({ minSeconds: 5 }).then(r => {
-      if (r.rewarded) doRevive("ad watched");
-      else { elHint.textContent = "Reward not earned — the ad was skipped."; syncOverPrices(); }
-    });
   });
   btnReviveCoins.addEventListener("click", () => {
     if (reviveUsedThisSession) return;
@@ -494,7 +456,7 @@
     doRevive("bought for " + c + " coins");
   });
   btnUndo.addEventListener("click", () => {
-    // REWARDED UNDO — the non-ad path spends coins; the price climbs with the stack.
+    // UNDO — spends coins; the price climbs with the stack.
     if (state !== "play" || bodies.length === 0) return;
     const c = undoCost();
     if (coins < c) { elHint.textContent = "Undo costs " + c + " coins — you have " + coins + "."; return; }
@@ -508,11 +470,6 @@
   window.addEventListener("keydown", e => { if (e.key === "m" || e.key === "M") setMuted(!muted); });
   document.addEventListener("visibilitychange", () => { if (document.hidden) last = performance.now(); });
 
-  function requestMidgame() {
-    // MIDGAME AD — the fake stand-in. Swap this one call for the real SDK later.
-    if (!HAS_ADS) { console.log("[ads] midgame requested at game-over restart #" + games); return; }
-    FakeAds.interstitial({ minSeconds: 5 });
-  }
   function dailySeed() { const d = new Date(); return (d.getFullYear() * 10000 + (d.getMonth()+1) * 100 + d.getDate()) | 0; }
 
   // ---- render ----

@@ -23,11 +23,15 @@ The gallery is generated from the folder structure; there is nothing to hand-edi
 
 ## The two builds
 
-- **Ad-free** — what lives here. The ad stand-in is not loaded; each game detects its
-  absence and falls back to its non-ad path (in Starwell, the coin path). The reserved
-  banner slot is hidden.
-- **Ad build** — the version headed for a portal (CrazyGames). It keeps the ad module
-  and swaps the stand-in for the real SDK. Not published here.
+- **Ad-free** — what lives here. No ad module, no ad buttons, no ad slots, no ad code
+  path. This is the game as it plays with nothing between the player and the loop, so
+  the two builds can be compared directly.
+- **Ad build** — the portal version. It adds the SDK (rewarded / interstitial / banner)
+  at the marked spots; the game itself is otherwise unchanged. Not published here.
+
+The gallery's styling follows the host dashboard: same palette and monospace face
+(`--grn:#31e07f` on `--bg:#04070a`), scanline overlay, responsive grid (1 column on a
+phone, more as the window widens), content centred in a max-width shell.
 
 ## Local preview
 
