@@ -13,6 +13,17 @@
   only the game itself; all text is DOM so nothing is blurry at any DPR. The canvas CSS
   size is fixed to the logical box (hi-DPI bug from slice 2 corrected). No mechanic
   added or changed.
+  Slice 4 (retention): the presentation + meta layer — FLOW streak (consecutive
+  minimum-turn clears), near-miss cue (ball within 2 cells of the drain, unsunk —
+  BFS-proven the "one cell beside" geometry is unreachable here), wall-swallow sfx,
+  depth-tint background, the drain aura, turn-budget tension, depth milestones, the
+  milestones, the DAILY tag on the daily seed, and music pause on hidden. Slice 5
+  (2026-10-24, as-requested): MUSIC and SFX are separate toggles with separate
+  persistence, and all light (ball glow, drain aura, rings, particles) is held
+  inside the board frame with a clip. None of it feeds the core.
+  Game core still byte-identical to slice 1: the determinism arm must stay
+  green, and none of this is a rule, a number the run reads back, or a new
+  persistence key.
   SPEC: turnslip/SPEC.md  ·  CONCEPT: turnslip/CONCEPT.md
 -->
 <head>
@@ -36,27 +47,42 @@
   #vig { position:absolute; inset:0; z-index:1; pointer-events:none;
          background:radial-gradient(130% 95% at 50% 42%, rgba(0,0,0,0) 58%, rgba(2,3,10,.55) 100%); }
 
-  /* ---- HUD: the three stats centred, the meta line full-width under them ---- */
+  /* ---- HUD: two in-the-moment stats as heroes, a light meta row below them ----
+     Hierarchy by kind of data (slice 5b): the two numbers you read every turn
+     (DEPTH, TURNS) are large and breathe; the progress numbers (BEST, FLOW)
+     are small chips; identity + seed + the two sound switches own the meta
+     row's edges. Nothing here feeds the core. */
   #hud { position:absolute; top:0; left:0; right:0; z-index:3; pointer-events:none;
          padding:calc(env(safe-area-inset-top, 0px) + 8px * var(--s)) calc(16px * var(--s)) 0; }
-  #hud .stats { display:flex; justify-content:center; gap:calc(30px * var(--s)); }
-  #hud .stat { display:flex; flex-direction:column; align-items:center; gap:calc(3px * var(--s)); }
-  #hud .stat span { font-size:calc(9px * var(--s)); letter-spacing:.22em; opacity:.5; }
-  #hud .stat b { font-size:calc(22px * var(--s)); font-weight:650; line-height:1;
+  #hud .stats { display:flex; justify-content:center; align-items:flex-start;
+                gap:calc(34px * var(--s)); }
+  #hud .stat { display:flex; flex-direction:column; align-items:center; gap:calc(4px * var(--s)); }
+  #hud .stat span { font-size:calc(9px * var(--s)); letter-spacing:.26em; opacity:.5; }
+  #hud .stat b { font-size:calc(26px * var(--s)); font-weight:680; line-height:1;
                  font-variant-numeric:tabular-nums; }
   #hud .meta { display:flex; justify-content:space-between; align-items:center;
-               margin-top:calc(9px * var(--s)); }
-  #hud .brand { font-size:calc(9px * var(--s)); letter-spacing:.34em; opacity:.34; }
-  #hud .seedtag { font-size:calc(9px * var(--s)); letter-spacing:.18em; opacity:.4;
+               margin-top:calc(8px * var(--s)); }
+  #hud .brand { font-size:calc(8px * var(--s)); letter-spacing:.26em; opacity:.32; }
+  #hud .chips { display:flex; gap:calc(7px * var(--s)); }
+  #hud .chip { font-size:calc(9px * var(--s)); letter-spacing:.12em; opacity:.55;
+               border:calc(1px * var(--s)) solid rgba(150,170,255,.20);
+               border-radius:calc(7px * var(--s));
+               padding:calc(3px * var(--s)) calc(8px * var(--s));
+               font-variant-numeric:tabular-nums; }
+  #hud .chip b { font-weight:650; }
+  #flowStat.hot { color:#ffb347; border-color:rgba(255,179,71,.5); opacity:1; }
+  #hud .meta-r { display:flex; align-items:center; gap:calc(7px * var(--s)); }
+  #hud .seedtag { font-size:calc(8px * var(--s)); letter-spacing:.18em; opacity:.4;
                   font-variant-numeric:tabular-nums; }
   #hud .mute { pointer-events:auto; cursor:pointer; font-size:calc(10px * var(--s)); letter-spacing:.14em;
                opacity:.55; border:calc(1px * var(--s)) solid rgba(150,170,255,.28);
                border-radius:calc(8px * var(--s));
                padding:calc(5px * var(--s)) calc(10px * var(--s)); }
   #hud .mute:active { opacity:1; background:rgba(126,242,255,.08); }
+  #hud .meta .mute.off { opacity:.32; }
 
   /* ---- board caption (BOARD N · BEST x TURNS) ---- */
-  #boardCap { position:absolute; left:0; right:0; top:calc(74px * var(--s)); z-index:3; text-align:center;
+  #boardCap { position:absolute; left:0; right:0; top:calc(92px * var(--s)); z-index:3; text-align:center;
               font-size:calc(10px * var(--s)); letter-spacing:.3em; opacity:.55; pointer-events:none;
               font-variant-numeric:tabular-nums; white-space:nowrap; }
 
@@ -112,6 +138,27 @@
   @keyframes tutfade { from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:none;} }
   @keyframes blink { 0%,100%{opacity:.25} 50%{opacity:.85} }
 
+  /* ---- slice 4: presentation + meta layer (the game core never reads any of this) ---- */
+  #daily { display:inline-block; margin-left:calc(5px * var(--s));
+           font-size:calc(8px * var(--s)); letter-spacing:.14em; color:#ffb347;
+           border:calc(1px * var(--s)) solid rgba(255,179,71,.55); border-radius:calc(6px * var(--s));
+           padding:calc(1px * var(--s)) calc(5px * var(--s)); vertical-align:1px; }
+  /* tension: the edge of the day pulsing red at two turns or less */
+  #tension { position:absolute; inset:0; z-index:2; pointer-events:none; opacity:0;
+             background:radial-gradient(130% 95% at 50% 42%, rgba(0,0,0,0) 60%, rgba(255,60,60,.16) 100%);
+             transition:opacity .3s; }
+  #tension.on { opacity:1; animation:tpulse 1.05s ease-in-out infinite; }
+  @keyframes tpulse { 0%,100%{opacity:.35} 50%{opacity:1} }
+  /* milestone: a toast at the bottom, clear of the tap-zone chevrons */
+  #milestone { position:absolute; left:0; right:0; bottom:calc(158px * var(--s)); z-index:3;
+               text-align:center; pointer-events:none; opacity:0;
+               font-size:calc(13px * var(--s)); letter-spacing:.3em; color:#ffd9a0;
+               text-shadow:0 0 calc(14px * var(--s)) rgba(255,179,71,.6); }
+  /* over screen: the flow line */
+  #overScreen .row2 { display:flex; gap:calc(10px * var(--s)); justify-content:center; margin-top:calc(2px * var(--s)); }
+  #overScreen .row2 .badge { opacity:.6; }
+  #overScreen .row2 .badge.hot { opacity:1; color:#ffb347; border-color:rgba(255,179,71,.45); }
+
   #smoke { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; }
 </style>
 </head>
@@ -123,12 +170,17 @@
     <div class="stats">
       <div class="stat"><span>DEPTH</span><b id="depth">0</b></div>
       <div class="stat"><span>TURNS</span><b id="turns">0</b></div>
-      <div class="stat"><span>BEST</span><b id="best">0</b></div>
     </div>
     <div class="meta">
       <span class="brand">TURNSLIP</span>
-      <span class="seedtag" id="seedTag"></span>
-      <span class="mute" id="mute">&#9835; ON</span>
+      <span class="chips">
+        <span class="chip">BEST <b id="best">0</b></span>
+        <span class="chip" id="flowStat">FLOW <b id="flow">0</b></span>
+      </span>
+      <span class="meta-r">
+        <span class="seedtag" id="seedTag"></span><span id="daily" class="hidden">DAILY</span>
+        <span class="mute" id="music">&#9835; ON</span><span class="mute" id="sound">&#9835; ON</span>
+      </span>
     </div>
   </div>
   <div id="boardCap" class="hidden"></div>
@@ -146,9 +198,15 @@
       <span class="badge">TURNS <b id="finalTurns">0</b></span>
       <span class="badge newbest hidden" id="newBest">NEW BEST</span>
     </div>
+    <div class="row2">
+      <span class="badge">FLOW <b id="finalFlow">0</b></span>
+      <span class="badge">NEAR-MISS <b id="finalNear">0</b></span>
+    </div>
     <div class="music-line" id="musicLine">MUSIC — — — —</div>
     <div class="hint">TAP TO PLAY AGAIN</div>
   </div>
+  <div id="milestone"></div>
+  <div id="tension"></div>
   <div id="tutorial" class="hidden">
     <span><span class="arrow">&#8249; &#8250;</span>&nbsp;&nbsp;TAP A SIDE TO SPIN THE BOARD</span>
     <span>REACH THE HOLE DRAIN — WALLS LOOSEN EVERY TURN</span>
@@ -661,7 +719,7 @@
   const elDepth = document.getElementById("depth"), elTurns = document.getElementById("turns");
   const elBest = document.getElementById("best"), elFinal = document.getElementById("finalDepth");
   const elFinalBest = document.getElementById("finalBest");
-  const elMusic = document.getElementById("musicLine"), muteEl = document.getElementById("mute");
+  const elMusic = document.getElementById("musicLine"), musicEl = document.getElementById("music"), sfxEl = document.getElementById("sound");
   const tutorialEl = document.getElementById("tutorial");
   // slice 3: DOM UI surface
   const seedTag = document.getElementById("seedTag");
@@ -671,6 +729,11 @@
   const chevL = document.getElementById("chevL"), chevR = document.getElementById("chevR");
   const elFinalTurns = document.getElementById("finalTurns");
   const newBestEl = document.getElementById("newBest");
+  // slice 4: the meta + tension surface
+  const elFlow = document.getElementById("flow"), flowStat = document.getElementById("flowStat");
+  const finalFlow = document.getElementById("finalFlow"), finalNear = document.getElementById("finalNear");
+  const dailyEl = document.getElementById("daily"), tensionEl = document.getElementById("tension");
+  const milestoneEl = document.getElementById("milestone");
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   function fit() {
@@ -883,6 +946,8 @@
   let parts = [], stars = [];
   // ---- slice 3: run bookkeeping for the over screen (presentation only) ----
   let runTurns = 0, runStartBest = 0;
+  // ---- slice 4: meta bookkeeping (presentation only; the run never reads it back) ----
+  let flow = 0, near = 0, msTimer = null, chevHot = false;
 
   function setState(s) {
     state = s;
@@ -903,6 +968,8 @@
     // presentation beat: the board lands with a ring
     dealT = 0.28;
     spawnRing(W / 2, BY + BOARD / 2, BOARD * 0.40, "deal");
+    // slice 4: a milestone marks every fifth depth — the journey is visible
+    if (d > 0 && d % 5 === 0) milestone("DEPTH " + d + "  \u00B7  THE SLIP RUNS DEEP");
     // slice 3: rebuild the pips to the new budget
     buildPips();
     capCache = "";
@@ -910,6 +977,7 @@
   function newRun() {
     depth = 0; pending = null; flashT = 0; winT = 0; deadT = 0; runT = 0;
     runTurns = 0; runStartBest = save.bestDepth;
+    flow = 0; near = 0;
     newBoard(0);
     setState("play");
   }
@@ -936,12 +1004,25 @@
     const prev = capture();
 
     rotState(s, dir);
-    wallsStep(s);
+    const swallowed = wallsStep(s);
     const sunk = ballFall(s);
 
     rot = (rot + dir + 4) % 4;
     turnsLeft--;
     flashT = 0.22; flashDir = dir;
+    // slice 4: the clock makes a sound when a wall is swallowed into the drain,
+    // so spending the board's own structure reads as an event, not a default
+    if (swallowed > 0) sfxSwallow(swallowed);
+
+    // slice 4: a NEAR-MISS is the ball resting within two cells of the hole
+    // without sinking — the "so close" of this game, defined in the geometry it
+    // actually has (rigid rotation + fall makes exotic alignments unreachable;
+    // the BFS arm of eval-proof.js proves the counter is live, not dead code).
+    // The old "ball beside the drain in its row" definition was proven by that
+    // BFS to occur 0 times in 16 depths and was dropped. Presentation
+    // bookkeeping only: the run never reads this back.
+    const bd = Math.abs(s.ball.r - s.drain.r) + Math.abs(s.ball.c - s.drain.c);
+    const nearNow = bd <= 2;
 
     const items = [];
     for (let i = 0; i < prev.stones.length; i++) {
@@ -987,6 +1068,12 @@
       const bp = cellPos(s, s.drain.r, s.drain.c);
       spawnRing(bp.x, bp.y, 8, "drain");
     }
+    else if (nearNow) {
+      // the almost: it came to rest a step from the hole and this turn didn't put it in
+      near++; sfxNear();
+      const bp = cellPos(s, s.drain.r, s.drain.c);
+      spawnRing(bp.x, bp.y, 6, "near");
+    }
     else if (turnsLeft <= 0) {
       pending = "lose"; deadT = 0.45;
       sfxLose();
@@ -1001,6 +1088,13 @@
     const p = pending; pending = null; animData = null;
     if (p === "win") {
       runTurns += budget - turnsLeft;
+      // slice 4: FLOW is the streak of perfect clears — the board taken in its
+      // MINIMUM number of turns (the solver already proves what that is, so the
+      // bar is knowable, not vague). A wasted turn breaks the streak. One spare
+      // of tension is the game's own "well played" bar; FLOW is the mastery bar.
+      // Presentation bookkeeping only: the run's outcome never consumed it.
+      flow = (budget - turnsLeft) === minTurns ? flow + 1 : 0;
+      if (flow === 3) sfxFlow();
       const used = budget - turnsLeft, key = SEED + ":" + depth;
       if (!(key in save.bestTurns) || used < save.bestTurns[key]) { save.bestTurns[key] = used; persist(); }
       depth++;
@@ -1013,6 +1107,8 @@
       elFinal.textContent = String(depth);
       elFinalBest.textContent = String(save.bestDepth);
       elFinalTurns.textContent = String(runTurns);
+      finalFlow.textContent = String(flow);
+      finalNear.textContent = String(near);
       newBestEl.classList.toggle("hidden", !(depth > 0 && depth > runStartBest));
       if (window.Minstrel) {
         const d = window.Minstrel.describe(MUS_SEED);
@@ -1050,14 +1146,23 @@
     if (AC && AC.state === "suspended" && AC.resume) { const p = AC.resume(); if (p && p.catch) p.catch(() => {}); }
     return AC;
   }
-  const audio = { music: null, muted: !!save.muted, vol: 0.9 };
+  const audio = { music: null, musicOn: true, sfxOn: true, vol: 0.9 };
+  // slice 5: separate switches, separate keys — one read for the Minstrel, one
+  // for the blip layer. The old single switch migrates to both.
+  if (save.musicOn === undefined && save.sfxOn === undefined) {
+    // legacy: `muted` gated everything at once
+    const legacy = save.muted ? 0 : 1;
+    save.musicOn = legacy; save.sfxOn = legacy; delete save.muted; persist();
+  }
+  audio.musicOn = save.musicOn !== 0;
+  audio.sfxOn = save.sfxOn !== 0;
   // the day seed decides the music too: one of 16 Minstrel characters per day.
   const MUS_SEED = ((Math.abs(SEED) % 16) + 16) % 16 + 1;
   function initAudio() {
     if (audio.music) return;
     const c = ac();
     if (!c || !window.Minstrel) return;
-    const m = new window.Minstrel({ seed: MUS_SEED, tempo: 93, volume: audio.muted ? 0 : audio.vol });
+    const m = new window.Minstrel({ seed: MUS_SEED, tempo: 93, volume: audio.musicOn ? audio.vol : 0 });
     m.ctx = c; m._build();          // the constructor ignores opts.ctx; share one AudioContext with the SFX layer
     m.onnote = (rec, midi, dur, voice) => {
       // drums bypass onnote; only pitched voices report, carrying their voice in `voice`
@@ -1070,17 +1175,39 @@
     initAudio();
     if (audio.music && !audio.music.playing) audio.music.start();
   }
-  function toggleMute() {
-    audio.muted = !audio.muted;
-    save.muted = audio.muted ? 1 : 0; persist();
-    if (audio.music) audio.music.setVolume(audio.muted ? 0 : audio.vol);
-    muteEl.textContent = audio.muted ? "♪ OFF" : "♪ ON";
+  function paintSwitches() {
+    musicEl.textContent = audio.musicOn ? "\u266A ON" : "\u266A OFF";
+    sfxEl.textContent = audio.sfxOn ? "\u266A ON" : "\u266A OFF";
+    musicEl.classList.toggle("off", !audio.musicOn);
+    sfxEl.classList.toggle("off", !audio.sfxOn);
   }
-  muteEl.addEventListener("pointerdown", (e) => { e.stopPropagation(); toggleMute(); }, { passive: false });
+  // slice 5: separate switches — the Minstrel keeps running under a volume-0
+  // mute (the transport stays seamless), the blip layer simply goes dark.
+  function toggleMusic() {
+    audio.musicOn = !audio.musicOn;
+    save.musicOn = audio.musicOn ? 1 : 0; persist();
+    if (audio.music) audio.music.setVolume(audio.musicOn ? audio.vol : 0);
+    paintSwitches();
+  }
+  function toggleSfx() {
+    audio.sfxOn = !audio.sfxOn;
+    save.sfxOn = audio.sfxOn ? 1 : 0; persist();
+    paintSwitches();
+  }
+  musicEl.addEventListener("pointerdown", (e) => { e.stopPropagation(); toggleMusic(); }, { passive: false });
+  sfxEl.addEventListener("pointerdown", (e) => { e.stopPropagation(); toggleSfx(); }, { passive: false });
+
+  // slice 4: pause on visibility — the music stops (a return restarts the piece
+  // whole); the run itself is turn-based, never time-based, so nothing else moves.
+  document.addEventListener("visibilitychange", function () {
+    if (!audio.music) return;
+    if (document.hidden) { if (audio.music.playing) audio.music.stop(); }
+    else if (state === "play" && !audio.music.playing) audio.music.start();
+  });
 
   // tiny synthesized cues — the SFX layer the Minstrel leaves to the game
   function blip(f0, f1, dur, type, g) {
-    if (audio.muted) return;
+    if (!audio.sfxOn) return;
     const c = ac(); if (!c) return;
     const o = c.createOscillator(), v = c.createGain();
     o.type = type || "sine";
@@ -1100,12 +1227,21 @@
     });
   }
   function sfxLose() { blip(150, 55, 0.30, "sine", 0.20); }
+  // slice 4: the new cues — the near-miss is a downward double-ding (the almost),
+  // the swallow a low thud (the clock spending itself), the flow-hit a rising shimmer
+  function sfxNear() { blip(900, 320, 0.22, "sine", 0.12); setTimeout(function () { blip(620, 240, 0.24, "sine", 0.08); }, 90); }
+  function sfxSwallow(n) { blip(200, 90, 0.14, "sine", 0.10 + 0.02 * Math.min(2, n)); }
+  function sfxFlow() {
+    [783.99, 987.77, 1174.66, 1567.98].forEach(function (f, i) {
+      setTimeout(function () { blip(f, f * 1.02, 0.14, "sine", 0.10); }, i * 60);
+    });
+  }
 
   // ---------- slice 2: particles (presentation only, capped, never game state) ----------
   function spawnRing(x, y, R, kind) {
-    const n = kind === "drain" ? 16 : kind === "lose" ? 12 : kind === "turn" ? 14 : 10;
-    const sp = kind === "drain" ? 220 : kind === "lose" ? 170 : 150;
-    const col = kind === "drain" ? "#ffb347" : kind === "lose" ? "#ff7b7b" : "#7ef2ff";
+    const n = kind === "drain" ? 16 : kind === "lose" ? 12 : kind === "turn" ? 14 : kind === "near" ? 10 : 10;
+    const sp = kind === "drain" ? 220 : kind === "lose" ? 170 : kind === "near" ? 150 : 150;
+    const col = kind === "drain" ? "#ffb347" : kind === "lose" ? "#ff7b7b" : kind === "near" ? "#ffb347" : "#7ef2ff";
     for (let i = 0; i < n && parts.length < 90; i++) {
       const a = (i / n) * 6.2832 + (i * 37 % 13) * 0.046;
       parts.push({
@@ -1143,6 +1279,19 @@
   }
   const cellPos = (s, r, c) => ({ x: BX + (c + 0.5) * (BOARD / s.N), y: BY + (r + 0.5) * (BOARD / s.N) });
 
+  // slice 4: the milestone toast — a line of type at the bottom, clear of the
+  // chevrons, that fades on its own
+  function milestone(text) {
+    milestoneEl.textContent = text;
+    milestoneEl.style.transition = "none";
+    milestoneEl.style.opacity = "1";
+    if (msTimer) clearTimeout(msTimer);
+    msTimer = setTimeout(function () {
+      milestoneEl.style.transition = "opacity 0.9s ease-out";
+      milestoneEl.style.opacity = "0";
+    }, 1600);
+  }
+
   // ---------- slice 3: DOM UI sync (cheap, change-detected, never in the game core) ----------
   let capCache = "", pipCache = -1, pipWarnCache = false;
   function buildPips() {
@@ -1168,6 +1317,13 @@
         kids[i].className = "pip" + (i < turnsLeft ? (warn ? " on warn" : " on") : "");
       }
     }
+    // slice 4: FLOW stat — the streak glows when warm, and the screen edge goes
+    // red at two turns or less, the same beat the pips already carry
+    const hot = flow >= 3;
+    if (elFlow.textContent !== String(flow)) elFlow.textContent = String(flow);
+    flowStat.classList.toggle("hot", hot);
+    if (hot !== chevHot) { chevHot = hot; chevL.style.color = chevR.style.color = hot ? "#ffb347" : ""; }
+    tensionEl.classList.toggle("on", state === "play" && turnsLeft <= 2);
     // the chevrons breathe on the music's strong line
     const ka = (0.42 + 0.30 * kickPulse).toFixed(3);
     chevL.style.opacity = ka; chevR.style.opacity = ka;
@@ -1180,6 +1336,21 @@
     wall: "#5a6bb0", wallEdge: "#a9bcff",
     ball: "#7ef2ff", drain: "#ffb347"
   };
+  // slice 4: the depth journey — the world warms as the run goes deep. Pure
+  // presentation: a background lerp and the frame's edge; the grid, the pieces
+  // and every rule stay exactly where slice 1 left them.
+  const DMAX = 12;
+  const hexLerp = (a, b, t) => {
+    const m = (i) => Math.round(a[i] + (b[i] - a[i]) * t).toString(16).padStart(2, "0");
+    return "#" + m(0) + m(1) + m(2);
+  };
+  function depthTint() {
+    const t = Math.min(1, (live ? depth : 0) / DMAX);
+    return {
+      top: hexLerp([5, 6, 15], [26, 13, 8], t),          // the sky, cold -> ember
+      edge: hexLerp([27, 33, 69], [255, 179, 71], t * 0.85) // the frame, cold -> amber
+    };
+  }
   function rrect(x, y, w, h, r, fill, stroke, lw) {
     ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h);
@@ -1205,9 +1376,19 @@
     return { x: lerp(it.mid.x, it.to.x, u), y: lerp(it.mid.y, it.to.y, u) };
   }
 
-  function drawPiece(kind, px, py, k, scale, alpha) {
+  function drawPiece(kind, px, py, k, scale, alpha, aura) {
     ctx.globalAlpha = alpha;
     const half = k * 0.44 * scale;
+    // slice 4: the drain's aura — the well's light gathers as the ball closes on
+    // the hole, by Manhattan distance: full at 4 cells or less, fading out at 8.
+    // The winning line reads by sight, not by counting cells.
+    if (kind === "ball" && aura > 0) {
+      const ar = half * (1.7 + aura * 4);
+      const g2 = ctx.createRadialGradient(px, py, 0, px, py, ar);
+      g2.addColorStop(0, "rgba(255,179,71," + (0.30 * aura).toFixed(3) + ")");
+      g2.addColorStop(1, "rgba(255,179,71,0)");
+      ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(px, py, ar, 0, 7); ctx.fill();
+    }
     if (kind === "stone") {
       rrect(px - half, py - half, half * 2, half * 2, k * 0.16, COL.stone, COL.stoneEdge, 2);
     } else if (kind === "wall") {
@@ -1233,7 +1414,11 @@
   }
 
   function render() {
-    ctx.fillStyle = COL.bg; ctx.fillRect(0, 0, W, H);
+    // slice 4: the world warms with depth (presentation only; the grid is the same)
+    const tint = depthTint();
+    const g0 = ctx.createRadialGradient(W / 2, H * 0.42, 40, W / 2, H * 0.5, H * 0.72);
+    g0.addColorStop(0, tint.top); g0.addColorStop(1, "#040409");
+    ctx.fillStyle = g0; ctx.fillRect(0, 0, W, H);
     drawStars();
     if (!live) return;
     const N = live.N, k = BOARD / N;
@@ -1241,7 +1426,16 @@
     const sh = shakeT > 0 ? Math.sin(tick * 1.35) * shakeT * 24 : 0;
     ctx.save();
     if (sh) ctx.translate(sh, -sh * 0.6);
-    rrect(BX - 7, BY - 7, BOARD + 14, BOARD + 14, 14, COL.frame, COL.frameEdge, 2);
+    rrect(BX - 7, BY - 7, BOARD + 14, BOARD + 14, 14, COL.frame, tint.edge, 2);
+
+    // slice 5: everything that glows (ball light, drain aura, rings, particles)
+    // is clipped to the frame's outer square — the light fills right up to the
+    // purple border (the band is part of the container, not padding).
+    ctx.save();
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(BX - 7, BY - 7, BOARD + 14, BOARD + 14, 14);
+    else ctx.rect(BX - 7, BY - 7, BOARD + 14, BOARD + 14);
+    ctx.clip();
 
     ctx.fillStyle = COL.dot;
     for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
@@ -1253,10 +1447,14 @@
 
     if (animating) {
       const items = animData.items;
+      const alignNow = (function () {
+        const d = Math.abs(live.ball.r - live.drain.r) + Math.abs(live.ball.c - live.drain.c);
+        return d <= 4 ? 1 - (d / 8) : 0;
+      })();
       for (let i = 0; i < items.length; i++) {
         const it = items[i], p = itemPos(it, t, animData.N, animData.dir);
         const fade = it.gone ? Math.max(0, (t - 0.5) / 0.5) : 0;
-        drawPiece(it.kind, BX + p.x * k, BY + p.y * k, k, 1 - 0.7 * fade, 1 - fade);
+        drawPiece(it.kind, BX + p.x * k, BY + p.y * k, k, 1 - 0.7 * fade, 1 - fade, it.kind === "ball" ? alignNow : 0);
       }
     } else {
       for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
@@ -1267,7 +1465,11 @@
         const w = live.walls[i];
         drawPiece("wall", BX + (w.c + 0.5) * k, BY + (w.r + 0.5) * k, k, 1, 1);
       }
-      drawPiece("ball", BX + (live.ball.c + 0.5) * k, BY + (live.ball.r + 0.5) * k, k, 1, 1);
+      const align = (function () {
+        const d = Math.abs(live.ball.r - live.drain.r) + Math.abs(live.ball.c - live.drain.c);
+        return d <= 4 ? 1 - (d / 8) : 0;
+      })();
+      drawPiece("ball", BX + (live.ball.c + 0.5) * k, BY + (live.ball.r + 0.5) * k, k, 1, 1, align);
     }
 
     // the board-deal beat: a ring opens from the box
@@ -1281,10 +1483,11 @@
     }
 
     drawParts();
+    ctx.restore();   // end of the light clip — the flashes stay full-stage
 
-    // big flashes
-    if (winT > 0) { ctx.fillStyle = "rgba(126,242,255," + (winT * 0.35).toFixed(3) + ")"; ctx.fillRect(0, 0, W, H); }
-    if (deadT > 0) { ctx.fillStyle = "rgba(255,70,70," + (deadT * 0.40).toFixed(3) + ")"; ctx.fillRect(0, 0, W, H); }
+    // big flashes — the win flushes amber (the drain's colour, not the ball's)
+    if (winT > 0) { ctx.fillStyle = "rgba(255,179,71," + (winT * 0.30).toFixed(3) + ")"; ctx.fillRect(0, 0, W, H); }
+    if (deadT > 0) { ctx.fillStyle = "rgba(255,64,64," + (deadT * 0.42).toFixed(3) + ")"; ctx.fillRect(0, 0, W, H); }
     ctx.restore();
 
     if (state === "play") {
@@ -1344,6 +1547,7 @@
     debug: () => ({
       state, depth, turnsLeft, budget, minTurns, N: live ? live.N : 0, rot, seed: SEED, tick,
       anim, pending, walls: live ? live.walls.length : 0, attempts, fallback,
+      flow, near,
       ball: live ? { r: live.ball.r, c: live.ball.c } : null,
       drain: live ? { r: live.drain.r, c: live.drain.c } : null,
       boardBest: save.bestTurns[SEED + ":" + depth] ?? null, bestDepth: save.bestDepth, ticksPerSec: DT
@@ -1392,8 +1596,8 @@
     _audioDesc: () => window.Minstrel ? window.Minstrel.describe(MUS_SEED) : null,
     _musicState: () => audio.music ? {
       playing: !!audio.music.playing, bars: audio.music.bars.length,
-      notes: audio.music.notes, hasAc: !!AC, muted: audio.muted
-    } : { playing: false, bars: 0, notes: 0, hasAc: !!AC, muted: audio.muted },
+      notes: audio.music.notes, hasAc: !!AC, musicOn: audio.musicOn, sfxOn: audio.sfxOn
+    } : { playing: false, bars: 0, notes: 0, hasAc: !!AC, musicOn: audio.musicOn, sfxOn: audio.sfxOn },
     _renderMusic: async function (bars) {
       if (!window.Minstrel) return { ok: false, why: "no engine" };
       if (typeof window.OfflineAudioContext === "undefined") return { ok: false, why: "no OfflineAudioContext" };
@@ -1414,8 +1618,11 @@
   };
 
   initStars();
-  seedTag.textContent = "SEED " + SEED;
-  muteEl.textContent = audio.muted ? "♪ OFF" : "♪ ON";
+  // slice 4: the daily board wears its tag — the same board for everyone who
+  // opens it today, the return hook made visible (CONCEPT §8)
+  seedTag.textContent = (urlSeed === null ? "DAILY SEED " : "SEED ") + SEED;
+  dailyEl.classList.toggle("hidden", urlSeed !== null);
+  paintSwitches();
   newRun();
   requestAnimationFrame(frame);
 })();
